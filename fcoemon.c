@@ -17,6 +17,7 @@
  * Maintained at www.Open-FCoE.org
  */
 
+#define _GNU_SOURCE
 #define __STDC_FORMAT_MACROS 1
 #include <ctype.h>
 #include <getopt.h>
@@ -3541,14 +3542,50 @@ static void fcm_srv_receive(void *arg)
 	enum fcoe_status rc = EFAIL;
 	int res, cmd, snum;
 	size_t size;
+	struct msghdr msg;
+	struct iovec iov;
+	union {
+		char buf[CMSG_SPACE(sizeof(struct ucred))];
+		struct cmsghdr align;
+	} cmsg_buf;
+	struct cmsghdr *cmsg;
+	struct ucred *cred = NULL;
 
 	snum = srv_info->srv_sock;
-	res = recvfrom(snum, buf, sizeof(buf) - 1,
-		       MSG_DONTWAIT, (struct sockaddr *)&from, &fromlen);
+
+	memset(&msg, 0, sizeof(msg));
+	iov.iov_base = buf;
+	iov.iov_len = sizeof(buf) - 1;
+	msg.msg_name = &from;
+	msg.msg_namelen = sizeof(from);
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+	msg.msg_control = cmsg_buf.buf;
+	msg.msg_controllen = sizeof(cmsg_buf.buf);
+
+	res = recvmsg(snum, &msg, MSG_DONTWAIT);
 	if (res < 0) {
 		FCM_LOG_ERR(errno, "Failed to receive data from socket %d",
 			    snum);
 		return;
+	}
+	fromlen = msg.msg_namelen;
+
+	for (cmsg = CMSG_FIRSTHDR(&msg); cmsg;
+	     cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+		if (cmsg->cmsg_level == SOL_SOCKET &&
+		    cmsg->cmsg_type == SCM_CREDENTIALS) {
+			cred = (struct ucred *)CMSG_DATA(cmsg);
+			break;
+		}
+	}
+
+	if (!cred || cred->uid != 0) {
+		FCM_LOG_ERR(EACCES,
+			    "Rejected command from unprivileged uid %d on socket %d",
+			    cred ? (int)cred->uid : -1, snum);
+		rc = ENOPERM;
+		goto err;
 	}
 
 	data = (struct clif_data *)buf;
@@ -3679,6 +3716,12 @@ static int fcm_srv_create(struct fcm_srv_info *srv_info)
 		FCM_LOG_ERR(errno, "Failed to create socket\n");
 		rc = errno;
 		goto err;
+	}
+
+	{
+		int optval = 1;
+		setsockopt(srv_info->srv_sock, SOL_SOCKET, SO_PASSCRED,
+			   &optval, sizeof(optval));
 	}
 
 	memset(&addr, 0, sizeof(addr));

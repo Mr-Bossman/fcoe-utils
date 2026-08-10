@@ -1,4 +1,4 @@
-AC_INIT([fcoe-utils], [1.0.34], [https://github.com/openSUSE/fcoe-utils])
+AC_INIT([fcoe-utils], [2.0], [https://github.com/openSUSE/fcoe-utils])
 
 m4_ifdef([AM_PROG_AR], [AM_PROG_AR])
 AM_INIT_AUTOMAKE([foreign])

@@ -144,6 +144,12 @@ static enum fcoe_status fcoeadm_open_cli(struct clif_sock_info *clif_info)
 	if (clif_info->socket_fd < 0)
 		return ENOMONCONN;
 
+	{
+		int optval = 1;
+		setsockopt(clif_info->socket_fd, SOL_SOCKET, SO_PASSCRED,
+			   &optval, sizeof(optval));
+	}
+
 	lp = &clif_info->local;
 	memset(lp, 0, sizeof(*lp));
 	lp->sun_family = AF_LOCAL;
