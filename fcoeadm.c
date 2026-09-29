@@ -108,19 +108,13 @@ static int fcoeadm_request(struct clif_sock_info *clif_info,
 	size_t len;
 	int rc = SUCCESS;
 
-	/*
-	 * TODO: This is odd that we read the response code back as a
-	 * string. We should just write the error code into a member
-	 * of clif_data and then just read it directly.
-	 */
-
 	len = MAX_MSGBUF - 1;
 	rc = fcoeadm_clif_request(clif_info, data, sizeof(struct clif_data),
 				  rbuf, &len);
 
 	if (!rc) {
 		rbuf[len] = '\0';
-		rc = atoi(rbuf);
+		data->response_code = atoi(rbuf);
 	}
 
 	return rc;
@@ -198,16 +192,26 @@ fcoeadm_action(enum clif_action cmd, char *ifname, enum clif_flags flags)
 		data.ifname[0] = '\0';
 	data.cmd = cmd;
 	data.flags = flags;
+	data.response_code = 0;
 
 	rc = fcoeadm_open_cli(&clif_info);
+	if (rc)
+		return rc;
+
+	rc = fcoeadm_request(&clif_info, &data);
+	/* fcoeadm_request returned success */
 	if (!rc) {
-		rc = fcoeadm_request(&clif_info, &data);
-		if (rc > 0 && cmd == CLIF_PID_CMD) {
-			printf("%d\n", rc);
-			rc = 0;
-		}
-		fcoeadm_close_cli(&clif_info);
+		/* fcoemon returned negative error code or success*/
+		if (data.response_code <= 0)
+			rc = -data.response_code;
+		/* If the command is to get the PID, print it */
+		else if (cmd == CLIF_PID_CMD)
+			printf("%d\n", data.response_code);
+		/* fcoemon returned a positive value */
+		else
+			rc = data.response_code;
 	}
+	fcoeadm_close_cli(&clif_info);
 
 	return rc;
 }
@@ -529,6 +533,10 @@ err:
 
 		case EBADCLIFMSG:
 			FCOE_LOG_ERR("Messaging error\n");
+			break;
+
+		case ENOPERM:
+			FCOE_LOG_ERR("Permission denied\n");
 			break;
 
 		default:

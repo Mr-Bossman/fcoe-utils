@@ -68,6 +68,7 @@ struct clif_data {
 	enum clif_action cmd;
 	char ifname[IFNAMSIZ];
 	enum clif_flags flags;
+	int response_code;
 };
 
 #endif /* _FCOE_CLIF_H_ */

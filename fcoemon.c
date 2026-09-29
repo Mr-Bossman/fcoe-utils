@@ -3584,7 +3584,7 @@ static void fcm_srv_receive(void *arg)
 		FCM_LOG_ERR(EACCES,
 			    "Rejected command from unprivileged uid %d on socket %d",
 			    cred ? (int)cred->uid : -1, snum);
-		rc = ENOPERM;
+		rc = -ENOPERM;
 		goto err;
 	}
 
@@ -3594,13 +3594,13 @@ static void fcm_srv_receive(void *arg)
 		if (size < sizeof(*data) - sizeof(data->flags)) {
 			FCM_LOG_ERR(EMSGSIZE,
 				    "Message too short from socket %d", snum);
-			rc = EBADCLIFMSG;
+			rc = -EBADCLIFMSG;
 			goto err;
 		}
 		data->flags = 0;
 	} else if (size > sizeof(*data)) {
 		FCM_LOG_ERR(EMSGSIZE, "Message too long from socket %d", snum);
-		rc = EBADCLIFMSG;
+		rc = -EBADCLIFMSG;
 		goto err;
 	}
 
