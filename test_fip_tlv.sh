@@ -1,11 +1,12 @@
 #!/bin/bash
-# test_fip_tlv.sh — Test that fcoemon doesn't hang on malformed FIP TLVs
+# test_fip_tlv.sh — Test FIP TLV parsing: fcoemon infinite-loop + fipvlan overflow
 #
 # 1. Compile fip_inject
 # 2. Set up bridge topology via fip_bridge.sh
 # 3. Start fcoemon directly in foreground mode
 # 4. Inject mode 1 (valid), mode 2 (zero-len mid-stream), mode 0 (zero-len)
 # 5. Check fcoemon is still alive and not spinning after each
+# 6. Test fipvlan stack overflow via 372-VLAN-TLV injection
 #
 # Usage:  sudo ./test_fip_tlv.sh
 
@@ -14,16 +15,22 @@ set -eu
 TMPDIR_BASE=$(mktemp -d /tmp/fip_tlv_test.XXXXXX)
 PROBE_BIN="$TMPDIR_BASE/fip_inject"
 FCOEMON="${1:-${FCOEMON:-fcoemon}}"
+FIPVLAN_ASAN="$TMPDIR_BASE/fipvlan-asan"
 VETH_INJ="fipin"
+VETH_INJ_BR="fipin-br"
 VETH_MON="fipmn"
+BRIDGE="br-fiptest"
 VLAN_COUNT=10
 FCOEMON_PID=""
+FIPVLAN_PID=""
 FCOEMON_LOG="$TMPDIR_BASE/fcoemon.log"
+FIPVLAN_LOG="$TMPDIR_BASE/fipvlan.log"
 PASS=0
 FAIL=0
 
 cleanup() {
     [ -n "$FCOEMON_PID" ] && kill -9 "$FCOEMON_PID" 2>/dev/null && wait "$FCOEMON_PID" 2>/dev/null
+    [ -n "$FIPVLAN_PID" ] && kill -9 "$FIPVLAN_PID" 2>/dev/null && wait "$FIPVLAN_PID" 2>/dev/null
     rm -f "/etc/fcoe/cfg-$VETH_MON"*
     ./fip_bridge.sh down 2>/dev/null || true
     rm -rf "$TMPDIR_BASE"
@@ -41,6 +48,17 @@ echo "=== FIP TLV parsing test ==="
 echo "Building fip_inject..."
 gcc -Wall -Wextra -o "$PROBE_BIN" fip_inject.c
 echo "fip_inject compiled"
+
+echo "Building fipvlan-asan..."
+gcc -g -O0 -fsanitize=address \
+    -DPACKAGE_VERSION=\"1.0.34\" -DSYSCONFDIR=\"/usr/local/etc\" \
+    -I. -I./include \
+    -o "$FIPVLAN_ASAN" \
+    fipvlan.c lib/sa_log.c lib/sa_select.c lib/sa_timer.c lib/sa_other.c \
+    lib/fip.c lib/rtnetlink.c lib/sa_sys.c lib/sysfs_hba.c lib/fcoe_utils.c \
+    -lasan -lpciaccess
+echo "fipvlan-asan compiled"
+
 
 # ── Bridge ─────────────────────────────────────────────────────────────
 echo "Setting up bridge..."
@@ -127,6 +145,32 @@ test_mode 0 "Zero-length TLV at start" "aborting parse"
 setup_vn2vn_vlans
 
 test_mode 3 "FIP VLAN Request" "vlans found"
+
+# ── fipvlan stack buffer overflow test ─────────────────────────────────
+echo ""
+echo "--- fipvlan stack overflow (372 VLAN TLVs via fip_inject mode 4) ---"
+ip link del "$BRIDGE" 2>/dev/null || true
+
+timeout 30 "$FIPVLAN_ASAN" -m fabric "$VETH_INJ_BR" &>"$FIPVLAN_LOG" &
+FIPVLAN_PID=$!
+sleep 2
+
+"$PROBE_BIN" "$VETH_INJ" 4 "$VETH_INJ_BR" || true
+sleep 2
+if kill -0 "$FIPVLAN_PID" 2>/dev/null; then
+    log_pass "fipvlan stack overflow — survived 372 VLAN TLVs"
+else
+    if grep -q "AddressSanitizer" "$FIPVLAN_LOG" 2>/dev/null; then
+       log_fail "fipvlan stack overflow — ASAN detected overflow"
+       grep "SUMMARY:" "$FIPVLAN_LOG"
+    else
+        log_fail "fipvlan stack overflow — fipvlan crashed"
+    fi
+fi
+
+kill "$FIPVLAN_PID" 2>/dev/null || true
+wait "$FIPVLAN_PID" 2>/dev/null || true
+FIPVLAN_PID=""
 
 echo ""
 echo "============================================"
