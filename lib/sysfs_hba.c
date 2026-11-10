@@ -52,12 +52,16 @@ struct port_attributes *get_port_attribs_by_device(char *path)
 	char *rport;
 	int ret;
 
-	ret = readlink(path, link, sizeof(link));
+	ret = readlink(path, link, sizeof(link) - 1);
 	if (ret == -1)
 		return NULL;
+	link[ret] = '\0';
 
 	host = strstr(link, "host");
 	rport = strstr(link, "rport");
+	/* substrings not found */
+	if (!host || !rport)
+		return NULL;
 
 	host[strlen(host) - strlen(rport) - 1] = '\0';
 
@@ -71,12 +75,16 @@ struct port_attributes *get_rport_attribs_by_device(char *path)
 	char *rport;
 	int ret;
 
-	ret = readlink(path, link, sizeof(link));
+	ret = readlink(path, link, sizeof(link) - 1);
 	if (ret == -1)
 		return NULL;
+	link[ret] = '\0';
 
 	target = strstr(link, "target");
 	rport = strstr(link, "rport");
+	/* substrings not found */
+	if (!rport || !target)
+		return NULL;
 
 	rport[strlen(rport) - strlen(target) - 1] = '\0';
 
