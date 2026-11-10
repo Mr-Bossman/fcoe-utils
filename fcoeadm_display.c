@@ -441,14 +441,15 @@ static void list_luns_by_rport(char *rport, enum disp_style style)
 	if (rc < 0 || (size_t) rc >= sizeof(path))
 		return;
 
-	ret = readlink(path, link, sizeof(link));
+	ret = readlink(path, link, sizeof(link) - 1);
 	if (ret == -1)
 		return;
-
-	if (link[ret] != '\0')
-		link[ret] = '\0';
+	link[ret] = '\0';
 
 	substr = strstr(link, "net");
+	/* substring not found */
+	if (!substr)
+		return;
 	rc = snprintf(path, sizeof(path), "/sys/class/%s", substr);
 	if (rc < 0 || (size_t) rc >= sizeof(path))
 		return;
@@ -692,13 +693,11 @@ static char *get_ifname_from_rport(char *rport)
 	if (err == -1)
 		return NULL;
 
-	ret = readlink(path, link, sizeof(link));
+	ret = readlink(path, link, sizeof(link) - 1);
 	free(path);
 	if (ret == -1)
 		return NULL;
-
-	if (link[ret] != '\0')
-		link[ret] = '\0';
+	link[ret] = '\0';
 
 	offs = strstr(link, "/net/");
 	if (!offs)
@@ -779,10 +778,11 @@ static bool rport_is_child(const char *rport, const char *ifname)
 	if (err == -1)
 		return false;
 
-	ret = readlink(path, link, sizeof(link));
+	ret = readlink(path, link, sizeof(link) - 1);
 	free(path);
 	if (ret == -1)
 		return false;
+	link[ret] = '\0';
 
 	offs = strstr(link, ifname);
 
