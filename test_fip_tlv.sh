@@ -140,6 +140,7 @@ write_fcoe_cfg "$VETH_MON" fabric
 test_mode 1 "Valid FIP VLAN notification" "OP: ENABLE $VETH_MON"
 test_mode 2 "Zero-length TLV after valid TLV" "aborting parse"
 test_mode 0 "Zero-length TLV at start" "aborting parse"
+test_mode 5 "Inflated desc_len (fip_recv length bypass)" "received data less"
 
 # ── VN2VN VLAN request test (mode 3) ─────────────────────────────────
 setup_vn2vn_vlans
