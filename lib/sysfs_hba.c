@@ -479,14 +479,14 @@ char *get_pci_dev_from_netdev(const char *netdev)
 	do {
 		cp = strrchr(buf, '/');
 		if (!cp)
-			break;
+			return NULL;
 
 		ret = sscanf(cp + 1, "%x:%x:%x.%x", &dom, &bus, &dev, &func);
 		if (ret == 4)
 			break;
 
 		*cp = '\0';
-	} while (cp && cp > buf);
+	} while (cp > buf);
 
 	ret = asprintf(&pcidev, "%04x:%02x:%02x.%x", dom, bus, dev, func);
 	if (ret == -1)
